@@ -3,6 +3,7 @@ import networkx as nx
 import sys
 import os
 import random
+import math
 
 class adjlist:
     def __init__(self, G):
@@ -123,6 +124,7 @@ class active_list:
 
 def init_list(list_nodes):
     # It takes a list of nodes with nonzero mass, then init
+    list_nodes = list(list_nodes)
     Q = active_list(list_nodes[0])
     for i in range(1, len(list_nodes)):
         Q.add(list_nodes[i])
@@ -141,12 +143,11 @@ def capacity_releasing_diffusion(G, start_node, cond, threshold, iters):
     mass = G.degree[start_node] 
     G.nodes[start_node]["mass"] = mass 
     # Maintain a list of nodes with mass, initially it's just start node
-    work_set = [start_node]
-    for i in range(iters):
-        # Initialize parameters
+    work_set = {start_node}
+    C = 1 / cond
+
+    def CRD_inner():
         for node in work_set:
-            G.nodes[node]["mass"] *= 2  # Double amount of mass at start
-            assert(G.nodes[node]["mass"] <= 2 * nx.degree(G.nodes[node]))
             G.nodes[node]["height"] = 0  # Set all labels to 0
             in_edges = G.in_edges(node)
             out_edges = G.out_edges(node)
@@ -157,7 +158,8 @@ def capacity_releasing_diffusion(G, start_node, cond, threshold, iters):
                 G.edges[edge]["flow"] = 0
                 G.edges[edge]["capacity"] = 0
         Q = init_list(work_set)  # Initialize data structure Q
-
+        height = 3 * math.log2(mass) / cond
+            
         def eligible(edge):
             v, u, weights = edge
             flag1 = G.nodes[v]["height"] > G.nodes[u]["height"]
@@ -181,6 +183,7 @@ def capacity_releasing_diffusion(G, start_node, cond, threshold, iters):
                 else:  # index == deg, do Relabel
                     G.nodes[v]["height"] += 1
                     G.nodes[v]["current"] = 0
+                    G.edges[edge]["capacity"] = min(G.nodes[v]["height"], C)
                     return 1
 
         def push(edge):
@@ -198,12 +201,33 @@ def capacity_releasing_diffusion(G, start_node, cond, threshold, iters):
             v = Q.get_first()
             rv = push_relabel(v)
             if rv == 0:  # Push
+                currIdx = G.nodes[v]["current"]
+                _, edgelist = adjG[v]
+                e = edgelist[currIdx]
+                _, u, _ = e
                 if G.nodes[v]["mass"] == G.degree[v]:
                     Q.remove()
-                if G.nodes[u]["mass"] >= G.degree[u]:
+                if G.nodes[u]["mass"] >= G.degree[u] and u not in work_set:
                     Q.add(u)
-            else if rv == 1:
-                
+                    work_set.add(u)
+            elif rv == 1:  # Relabel
+                if G.nodes[v]["height"] <  height:  # Not reach max height yet
+                    Q.shift(v, G.nodes[v]["height"])
+                else:
+                    Q.remove()
+
+    for i in range(iters):
+        # Initialize parameters
+        for node in work_set:
+            G.nodes[node]["mass"] *= 2  # Double amount of mass at start
+            assert(G.nodes[node]["mass"] <= 2 * nx.degree(G.nodes[node]))
+        CRD_inner()
+        residual_mass = 0
+        for node in work_set:
+            G.nodes[node]["mass"] = min(G.degree[node], G.nodes[node]["mass"])
+            residual_mass += G.nodes[node]["mass"]
+        if residual_mass <= threshold * (2**i * 2 * G.degree[start_node]):
+            cut1 = work_set
 
 
 
