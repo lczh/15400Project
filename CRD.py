@@ -4,14 +4,14 @@ import sys
 import os
 import random
 import math
+import matplotlib.pyplot as plt
 
 class adjlist:
     def __init__(self, G):
-        n = G.number_of_nodes(G)
-        degrees = list(nx.degree(G))
-        self.graph = [(degrees[i], None) for i in range(n)]
+        n = G.number_of_nodes()
+        self.graph = [[G.degree[i] // 2, None] for i in range(n)]
         for i in range(n):
-            self.graph[i][1] = list(G.edges(i))
+            self.graph[i][1] = list(nx.edges(G, i))
 
 class linked_list_node:
     def __init__(self, node, label):
@@ -42,16 +42,28 @@ class active_list:
     def add(self, node):
         # Adding a node with label 0 to list
         new_start = linked_list_node(node, 0)
-        new_start.next = self.node_list.head
-        self.node_list.head.prev = new_start
-        self.node_list.head = new_start
+        if active_list.empty(self):
+            self.node_list.head = new_start
+        else:
+            new_start.next = self.node_list.head
+            self.node_list.head.prev = new_start
+            self.node_list.head = new_start
         self.label_list[0].head = new_start
+        if self.label_list[0].tail == None:
+            self.label_list[0].tail = new_start
         self.count += 1
 
     def remove(self):
         # Remove the first node from list
         label = self.node_list.head.label
         new_start = self.node_list.head.next
+        if new_start == None:
+            # Reach the end of list
+            self.node_list.head = None
+            self.label_list[label].head = None
+            self.label_list[label].tail = None
+            self.count -= 1
+            return
         self.node_list.head = new_start
         new_start.prev = None
         if new_start.label == label:
@@ -104,8 +116,15 @@ class active_list:
             self.label_list.append(new_entry)
         else:
             next_entry = self.label_list[orig_label + 1]
-            new_node.next = next_entry.head
-            next_entry.head = new_node
+            if next_entry.head == None:  # Empty entry
+                next_entry.head = new_node
+                next_entry.tail = new_node
+                if orig_label + 1 < len(self.label_list) - 1:
+                    next_next_entry = self.label_list[orig_label + 2]
+                    new_node.next = next_next_entry.head
+            else:
+                new_node.next = next_entry.head
+                next_entry.head = new_node
 
     def print_list(self):
         print("Linked list contains nodes:")
@@ -117,7 +136,8 @@ class active_list:
         for i in range(len(self.label_list)):
             print("Current label %d"%i)
             start = self.label_list[i].head
-            while start:
+            while start != None:
+                if start.label != i: break
                 print("Node %s, label %d"%(start.node, start.label))
                 start = start.next
 
@@ -130,6 +150,23 @@ def init_list(list_nodes):
         Q.add(list_nodes[i])
     return Q
 
+def compute_conductance(G, volG, S):
+    # Compute conductance of cut S, G is the original graph, S is a collection
+    # of nodes
+
+    # Step 1: compute volume of S, compare with volume of G - S
+    vol = 0
+    cut_edges = 0
+    for node in S:
+        vol += G.graph[node][0]
+        edges = G.graph[node][1]
+        for edge in edges:
+            _, u = edge
+            if u not in S:
+                cut_edges += 1
+    vol = min(vol, volG - vol)
+    return 1 if vol == 0 else cut_edges / vol
+
 def capacity_releasing_diffusion(G, start_node, cond, threshold, iters):
     # Initialize G and start_node
     G = G.to_directed()  # Turn it into a directed graph
@@ -140,13 +177,14 @@ def capacity_releasing_diffusion(G, start_node, cond, threshold, iters):
     nx.set_edge_attributes(G, 0, "flow")
     adjG = adjlist(G)
     # Set mass of start node to its degree
-    mass = G.degree[start_node] 
+    mass = adjG.graph[start_node][0]
     G.nodes[start_node]["mass"] = mass 
     # Maintain a list of nodes with mass, initially it's just start node
     work_set = {start_node}
+    mass_set = {start_node}
     C = 1 / cond
 
-    def CRD_inner():
+    def CRD_inner(mass):
         for node in work_set:
             G.nodes[node]["height"] = 0  # Set all labels to 0
             in_edges = G.in_edges(node)
@@ -158,39 +196,39 @@ def capacity_releasing_diffusion(G, start_node, cond, threshold, iters):
                 G.edges[edge]["flow"] = 0
                 G.edges[edge]["capacity"] = 0
         Q = init_list(work_set)  # Initialize data structure Q
-        height = 3 * math.log2(mass) / cond
+        height = math.floor(3 * math.log2(mass) / cond)
             
         def eligible(edge):
-            v, u, weights = edge
+            v, u = edge
             flag1 = G.nodes[v]["height"] > G.nodes[u]["height"]
-            flag2 = (weights["capacity"] - weights["flow"]) > 0
-            flag3 = (G.nodes[v]["mass"] - G.degree[v]) > 0
-            flag4 = (2 * G.degree[u] - G.nodes[u]["mass"]) > 0
+            flag2 = (G.edges[edge]["capacity"] - G.edges[edge]["flow"]) > 0
+            flag3 = (G.nodes[v]["mass"] - adjG.graph[v][0]) > 0
+            flag4 = (2 * adjG.graph[u][0] - G.nodes[u]["mass"]) > 0
             return flag1 and flag2 and flag3 and flag4
 
         def push_relabel(v):
-            deg, edgelist = adjG[v]
+            deg, edgelist = adjG.graph[v][0], adjG.graph[v][1]
             index = G.nodes[v]["current"]
+            if index == deg:
+                G.nodes[v]["height"] += 1
+                G.nodes[v]["current"] = 0
+                for edge in nx.edges(G, v):
+                    G.edges[edge]["capacity"] = min(G.nodes[v]["height"], C)
+                return 1
             edge = edgelist[index]
-            _, u, weights = edge
+            _, u = edge
             if eligible(edge):
                 push(edge)
                 return 0
-            else:
-                if index < deg:
-                    G.nodes[v]["current"] += 1
-                    return -1
-                else:  # index == deg, do Relabel
-                    G.nodes[v]["height"] += 1
-                    G.nodes[v]["current"] = 0
-                    G.edges[edge]["capacity"] = min(G.nodes[v]["height"], C)
-                    return 1
+            elif index < deg:
+                G.nodes[v]["current"] += 1
+                return -1
 
         def push(edge):
-            v, u, weights = edge
-            exv = G.nodes[v]["mass"] - G.degree[v]
-            rm = weights["capacity"] - weights["flow"]
-            exu = 2 * G.degree[u] - G.nodes[u]["mass"]
+            v, u = edge
+            exv = G.nodes[v]["mass"] - adjG.graph[v][0]
+            rm = G.edges[edge]["capacity"] - G.edges[edge]["flow"]
+            exu = 2 * adjG.graph[u][0] - G.nodes[u]["mass"]
             amount = min(min(exv, rm), exu)
             G.edges[edge]["flow"] += amount
             G.edges[u, v]["flow"] -= amount
@@ -202,47 +240,78 @@ def capacity_releasing_diffusion(G, start_node, cond, threshold, iters):
             rv = push_relabel(v)
             if rv == 0:  # Push
                 currIdx = G.nodes[v]["current"]
-                _, edgelist = adjG[v]
+                edgelist = adjG.graph[v][1]
                 e = edgelist[currIdx]
-                _, u, _ = e
-                if G.nodes[v]["mass"] == G.degree[v]:
+                _, u = e
+                mass_set.add(u)
+                if G.nodes[v]["mass"] == adjG.graph[v][0]:
                     Q.remove()
-                if G.nodes[u]["mass"] >= G.degree[u] and u not in work_set:
+                if G.nodes[u]["mass"] >= adjG.graph[u][0] and u not in work_set:
                     Q.add(u)
                     work_set.add(u)
             elif rv == 1:  # Relabel
                 if G.nodes[v]["height"] <  height:  # Not reach max height yet
-                    Q.shift(v, G.nodes[v]["height"])
+                    Q.shift(v, G.nodes[v]["height"] - 1)
                 else:
                     Q.remove()
 
-    for i in range(iters):
+    cut1 = None
+    for i in range(iters + 1):
         # Initialize parameters
-        for node in work_set:
+        for node in mass_set:
             G.nodes[node]["mass"] *= 2  # Double amount of mass at start
-            assert(G.nodes[node]["mass"] <= 2 * nx.degree(G.nodes[node]))
-        CRD_inner()
-        residual_mass = 0
+        CRD_inner(2 * mass)
+        mass = 0
+        for node in mass_set:
+            G.nodes[node]["mass"] = min(adjG.graph[node][0], G.nodes[node]["mass"])
+            mass += G.nodes[node]["mass"]
+        if mass <= threshold * (2**i * 2 * adjG.graph[start_node][0]):
+            cut1 = work_set.copy()
+            for node in mass_set:
+                G.nodes[node]["mass"] *= 2  # Double amount of mass at start
+            CRD_inner(2 * mass)
+            break
+    if cut1 == None:
+        cut1 = work_set.copy()
+    # Run an extra iteration, get the best level cut
+    print("Iterations:%d"%i)
+    S = set() 
+    height = math.floor(3 * math.log2(2 * mass) / cond)
+    volG = 0
+    min_cond = sys.maxsize
+    min_height = -1
+    for node in G.nodes:
+        volG += adjG.graph[node][0]
+    work_set_cond = compute_conductance(adjG, volG, cut1)
+    for i in range(1, height + 1):
         for node in work_set:
-            G.nodes[node]["mass"] = min(G.degree[node], G.nodes[node]["mass"])
-            residual_mass += G.nodes[node]["mass"]
-        if residual_mass <= threshold * (2**i * 2 * G.degree[start_node]):
-            cut1 = work_set
+            if G.nodes[node]["height"] == i:
+                S.add(node)
+        conductance = compute_conductance(adjG, volG, S)
+        if conductance <= min_cond:
+            min_cond = conductance
+            min_height = i
+    cut2 = set() 
+    for node in work_set:
+        if G.nodes[node]["height"] <= min_height:
+            cut2.add(node)
+    return (cut1, cut2, work_set_cond, min_cond)
 
+def tree_line_graph(n):
+    # n**1/3 should be integer
+    tree_nodes = int(np.cbrt(n))**2
+    copies = n // tree_nodes
 
-
-
-'''if __name__ == "__main__":
-    L = [str(i) for i in range(10)]
-    Q = active_list(L[0])
-    for i in range(1, 3):
-        Q.add(L[i])
-    Q.print_list()
-    for i in range(1, 3):
-        Q.remove()
-    Q.print_list()
-    for i in range(4, 8):
-        Q.add(L[i])
-    for i in range(4, 8):
-        Q.shift(L[7], i - 4)
-        Q.print_list() '''
+if __name__ == "__main__":
+    G = nx.path_graph(20) 
+    G = nx.convert_node_labels_to_integers(G)
+    nx.draw(G)
+    plt.show()
+    cut1, cut2, cond1, cond2 = capacity_releasing_diffusion(G, 0, 0.5, 0.5, 20)
+    H1 = G.subgraph(cut1)
+    nx.draw(H1)
+    plt.show()
+    H2 = G.subgraph(cut2)
+    nx.draw(H2)
+    plt.show()
+    print(cut1, cut2, cond1, cond2)
