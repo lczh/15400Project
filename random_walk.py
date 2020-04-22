@@ -5,6 +5,7 @@ import numpy as np
 import scipy as sp
 from tree_cross_line import gen_graph, gen_matrix, gen_diag
 import sys
+from compute_sweep_cond import compute_cond
 
 def take_step(transition_matrix, prob):
     return transition_matrix.dot(prob)
@@ -19,22 +20,7 @@ def find_cut(tree, path, iters, start):
         p = take_step(trans, p)
     d = gen_diag(G)
     normalized = list(np.divide(p, d))
-    normalized = list(enumerate(normalized))
-    normalized = sorted(normalized, key = lambda x : x[1], reverse = True)
-    B = set(list(G.nodes))
-    A = set()
-    min_cond = sys.maxsize
-    min_set = None
-    for tup in normalized:
-        vertex = tup[0]
-        A.add(vertex)
-        B.remove(vertex)
-        if len(B) == 0: break
-        cond = nx.cuts.conductance(G, A, B)
-        if cond < min_cond:
-            min_cond = cond
-            min_set = A.copy()
-    return (min_cond, min_set)
+    return compute_cond(G, normalized)
 
 def get_set(S, n, i):
     A = []
