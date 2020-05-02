@@ -22,6 +22,6 @@ def LPR_compute(G, alpha, i):
         x = np.linalg.solve(L, miu)
     except np.linalg.LinAlgError:
         x = np.linalg.lstsq(L, miu)
-    return x
+    return x[: n]
 
 

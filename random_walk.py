@@ -11,16 +11,22 @@ def take_step(transition_matrix, prob):
     return transition_matrix.dot(prob)
 
 # Perform random walk for iters steps, find lowest conductance sweepcut
-def find_cut(tree, path, iters, start):
+def find_cut(tree, path, iters, start, epsilon):
     G = gen_graph(tree, path)
     trans = gen_matrix(G)
     p = np.zeros(tree * path, dtype = float)
     p[start] = 1
+    d = gen_diag(G)
+    min_cond = 1
+    min_set = None
     for i in range(iters):
         p = take_step(trans, p)
-    d = gen_diag(G)
-    normalized = list(np.divide(p, d))
-    return compute_cond(G, normalized)
+        normalized = list(np.divide(p, d))
+        (cond, S) = compute_cond(G, normalized)
+        if cond < min_cond: 
+            min_cond = cond
+            min_set = S
+    return (min_cond, min_set)
 
 def get_set(S, n, i):
     A = []
